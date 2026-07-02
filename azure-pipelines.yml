@@ -4,16 +4,61 @@
 # https://aka.ms/yaml
 
 trigger:
-- main
+  - main # Triggers the pipeline when code pushes to the main branch
 
-pool:
-  vmImage: ubuntu-latest
+resources:
+  repositories:
+    - repository: github-repo
+      type: github
+      endpoint: YOUR_GITHUB_SERVICE_CONNECTION_NAME # Step 3 name
+      name: ashokguna06-ai/ashok
 
-steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
+stages:
+- stage: Build
+  displayName: 'Build and Package Code'
+  jobs:
+  - job: BuildJob
+    pool:
+      vmImage: 'windows-latest'
+    steps:
+    # 1. Checkout GitHub repository code
+    - checkout: self 
 
-- script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
+    # 2. (Optional) Run build/publish commands here if compiled code (like .NET, Node, etc.)
+    # Example for static/HTML websites: Just pass them to the next stage
+
+    # 3. Zip or Publish the files as an Artifact
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)'
+        ArtifactName: 'website-drop'
+        publishLocation: 'Container'
+
+- stage: Deploy
+  displayName: 'Deploy to Windows VM Website'
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - deployment: DeployWeb
+    displayName: 'Deploy to IIS / Web Directory'
+    # Connects to the environment created in Step 1
+    environment:
+      name: 'Production-VM' # Match your Environment name
+      resourceType: VirtualMachine
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          # 1. Download the artifact created in the build stage
+          - download: current
+            artifact: website-drop
+
+          # 2. Extract or copy the code to your local website folder
+          - powershell: |
+              $sourcePath = "$(Pipeline.Workspace)\website-drop"
+              $destinationPath = "C:\inetpub\wwwroot" # Replace with your VM web folder
+              
+              # Optional: Clean target folder first, then copy files
+              Remove-Item -Path "$destinationPath\*" -Recurse -Force -ErrorAction SilentlyContinue
+              Copy-Item -Path "$sourcePath\*" -Destination $destinationPath -Recurse -Force
+            displayName: 'Copy Code to Website Root'
